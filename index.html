@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dynamic SCORM Test</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 2rem; max-width: 600px; margin: 0 auto; line-height: 1.6; background: #fff; color: #333; }
+        .card { background: #f8fafc; padding: 2rem; border-radius: 12px; border: 1px solid #e2e8f0; }
+        .status { margin-bottom: 1rem; padding: 0.75rem; border-radius: 6px; font-weight: bold; font-size: 0.9rem; }
+        .status.connected { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; }
+        .status.disconnected { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
+        label { display: block; margin-bottom: 0.5rem; font-weight: 600; font-size: 0.9rem; }
+        input { display: block; width: 100%; padding: 0.75rem; margin-bottom: 1.5rem; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 1rem; }
+        button { background: #2563eb; color: white; border: none; padding: 1rem 1.5rem; border-radius: 6px; cursor: pointer; font-size: 1rem; font-weight: 600; width: 100%; transition: background 0.2s; }
+        button:hover { background: #1d4ed8; }
+        .result { margin-top: 1.5rem; text-align: center; font-size: 1.1rem; min-height: 1.5em; }
+        #debug { margin-top: 2rem; padding-top: 1rem; border-top: 1px solid #e2e8f0; font-family: monospace; font-size: 0.8rem; color: #64748b; white-space: pre-wrap; }
+    </style>
+    <script src="scorm-bridge.js"></script>
+</head>
+<body>
+    <div class="card">
+        <h1 style="margin-top:0">SCORM Test Tool</h1>
+        <div id="status" class="status disconnected">Connecting to LMS...</div>
+        
+        <label>Student Name</label>
+        <input type="text" id="studentName" placeholder="Enter name...">
+        
+        <p style="font-size: 0.9rem; color: #64748b; margin-bottom: 1.5rem;">
+            Clicking the button below will generate a <strong>random score</strong> and save it along with your name to the LMS.
+        </p>
+
+        <button onclick="saveData()">Randomize Score & Save</button>
+        
+        <div id="result" class="result"></div>
+        <div id="debug">Log output...</div>
+    </div>
+
+    <script>
+        const bridge = new ScormBridge();
+        const statusEl = document.getElementById('status');
+        const debugEl = document.getElementById('debug');
+
+        function log(msg) {
+            console.log(msg);
+            debugEl.textContent += '\n' + msg;
+        }
+
+        async function init() {
+            try {
+                log("Initializing bridge...");
+                const isConnected = await bridge.initialize();
+                
+                if (isConnected) {
+                    statusEl.textContent = "🟢 Connected to LMS Wrapper";
+                    statusEl.className = "status connected";
+                    
+                    // Try to restore name from 'suspend_data' (a good bucket for custom strings)
+                    const savedName = await bridge.getValue('cmi.suspend_data');
+                    if (savedName) {
+                        document.getElementById('studentName').value = savedName;
+                        log("Restored name: " + savedName);
+                    }
+                } else {
+                    statusEl.textContent = "🔴 Not Connected (Launch via LMS Wrapper)";
+                    log("Bridge initialize returned false");
+                }
+            } catch (e) {
+                statusEl.textContent = "🔴 Error: " + e.message;
+            }
+        }
+
+        async function saveData() {
+            if (!bridge.isConnected) {
+                alert("Cannot save: Not connected to LMS.");
+                return;
+            }
+
+            const name = document.getElementById('studentName').value;
+            const randomScore = Math.floor(Math.random() * 101); // 0-100
+            const scaledScore = randomScore / 100;
+
+            try {
+                log("Saving data...");
+                
+                // 1. Save Name (using suspend_data as a storage bucket)
+                await bridge.setValue('cmi.suspend_data', name);
+                
+                // 2. Save Score
+                await bridge.setValue('cmi.score.raw', randomScore);
+                await bridge.setValue('cmi.score.scaled', scaledScore);
+                
+                // 3. Set Status
+                const status = randomScore >= 80 ? 'passed' : (randomScore >= 50 ? 'completed' : 'failed');
+                await bridge.setValue('cmi.success_status', randomScore >= 80 ? 'passed' : 'failed');
+                await bridge.setValue('cmi.completion_status', 'completed');
+
+                // 4. Commit to database
+                await bridge.commit();
+
+                document.getElementById('result').textContent = `✅ Saved! Name: ${name} | Score: ${randomScore}%`;
+                log("Commit successful.");
+            } catch (e) {
+                log("Save Error: " + e.message);
+                alert("Error saving: " + e.message);
+            }
+        }
+
+        window.onload = init;
+    </script>
+</body>
+</html>
