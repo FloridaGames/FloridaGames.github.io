@@ -11,10 +11,14 @@
         .status.connected { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; }
         .status.disconnected { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
         label { display: block; margin-bottom: 0.5rem; font-weight: 600; font-size: 0.9rem; }
-        input { display: block; width: 100%; padding: 0.75rem; margin-bottom: 1.5rem; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 1rem; }
+        input { display: block; width: 100%; padding: 0.75rem; margin-bottom: 1rem; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 1rem; }
         button { background: #2563eb; color: white; border: none; padding: 1rem 1.5rem; border-radius: 6px; cursor: pointer; font-size: 1rem; font-weight: 600; width: 100%; transition: background 0.2s; }
         button:hover { background: #1d4ed8; }
+        button.secondary { background: #fff; color: #2563eb; border: 1px solid #2563eb; }
+        button.secondary:hover { background: #eff6ff; }
         .result { margin-top: 1.5rem; text-align: center; font-size: 1.1rem; min-height: 1.5em; }
+        .score-box { background: #e0e7ff; padding: 1.5rem; border-radius: 8px; margin-bottom: 1.5rem; border: 1px solid #c7d2fe; }
+        .score-val { font-size: 2rem; font-weight: 800; color: #312e81; }
         #debug { margin-top: 2rem; padding-top: 1rem; border-top: 1px solid #e2e8f0; font-family: monospace; font-size: 0.8rem; color: #64748b; white-space: pre-wrap; }
     </style>
     <script src="scorm-bridge.js"></script>
@@ -27,8 +31,17 @@
         <label>Student Name</label>
         <input type="text" id="studentName" placeholder="Enter name...">
         
+        <div class="score-box">
+            <label style="color: #3730a3; margin-bottom:0;">Current LMS Score</label>
+            <div style="display: flex; align-items: baseline; gap: 8px; margin-bottom: 1rem;">
+                <span id="currentScoreDisplay" class="score-val">--</span>
+                <span style="color: #4338ca;">/ 100</span>
+            </div>
+            <button class="secondary" onclick="getScore()">🔄 Refresh Score from LMS</button>
+        </div>
+
         <p style="font-size: 0.9rem; color: #64748b; margin-bottom: 1.5rem;">
-            Clicking the button below will generate a <strong>random score</strong> and save it along with your name to the LMS.
+            Generate a <strong>random score</strong> and save it to the LMS.
         </p>
 
         <button onclick="saveData()">Randomize Score & Save</button>
@@ -56,18 +69,40 @@
                     statusEl.textContent = "🟢 Connected to LMS Wrapper";
                     statusEl.className = "status connected";
                     
-                    // Try to restore name from 'suspend_data' (a good bucket for custom strings)
+                    // Try to restore name from 'suspend_data'
                     const savedName = await bridge.getValue('cmi.suspend_data');
                     if (savedName) {
                         document.getElementById('studentName').value = savedName;
                         log("Restored name: " + savedName);
                     }
+                    
+                    // Auto-fetch score on load
+                    getScore();
                 } else {
                     statusEl.textContent = "🔴 Not Connected (Launch via LMS Wrapper)";
                     log("Bridge initialize returned false");
                 }
             } catch (e) {
                 statusEl.textContent = "🔴 Error: " + e.message;
+            }
+        }
+
+        async function getScore() {
+            if (!bridge.isConnected) return;
+            try {
+                log("Fetching score...");
+                // SCORM 2004 typically uses cmi.score.raw for the actual point value
+                const score = await bridge.getValue('cmi.score.raw');
+                
+                const displayEl = document.getElementById('currentScoreDisplay');
+                if (score === "" || score === null || score === "undefined") {
+                     displayEl.textContent = "--";
+                } else {
+                     displayEl.textContent = score;
+                }
+                log("Score fetched: " + score);
+            } catch (e) {
+                log("Error fetching score: " + e.message);
             }
         }
 
@@ -84,23 +119,23 @@
             try {
                 log("Saving data...");
                 
-                // 1. Save Name (using suspend_data as a storage bucket)
                 await bridge.setValue('cmi.suspend_data', name);
                 
-                // 2. Save Score
                 await bridge.setValue('cmi.score.raw', randomScore);
                 await bridge.setValue('cmi.score.scaled', scaledScore);
                 
-                // 3. Set Status
                 const status = randomScore >= 80 ? 'passed' : (randomScore >= 50 ? 'completed' : 'failed');
                 await bridge.setValue('cmi.success_status', randomScore >= 80 ? 'passed' : 'failed');
                 await bridge.setValue('cmi.completion_status', 'completed');
 
-                // 4. Commit to database
                 await bridge.commit();
 
                 document.getElementById('result').textContent = `✅ Saved! Name: ${name} | Score: ${randomScore}%`;
                 log("Commit successful.");
+                
+                // Refresh the display to show the new saved value
+                getScore();
+                
             } catch (e) {
                 log("Save Error: " + e.message);
                 alert("Error saving: " + e.message);
